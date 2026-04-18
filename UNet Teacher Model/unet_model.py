@@ -50,7 +50,7 @@ class UNet(nn.Module):
         self.enc1 = DoubleConv(in_channels, f, dropout=0.0)
         self.enc2 = DoubleConv(f, f * 2, dropout=dropout)
         self.enc3 = DoubleConv(f * 2, f * 4, dropout=dropout)
-        
+
         self.pool = nn.MaxPool2d(2)
 
         self.bottleneck = DoubleConv(f * 4, f * 8, dropout=dropout * 2)
@@ -58,11 +58,11 @@ class UNet(nn.Module):
         self.up3 = nn.ConvTranspose2d(f * 8, f * 4, kernel_size=2, stride=2)
         self.attn3 = AttentionGate(gate_ch=f * 4, skip_ch=f * 4, inter_ch=f * 2)
         self.dec3 = DoubleConv(f * 8, f * 4, dropout=dropout)
-        
+
         self.up2 = nn.ConvTranspose2d(f * 4, f * 2, kernel_size=2, stride=2)
         self.attn2 = AttentionGate(gate_ch=f * 2, skip_ch=f * 2, inter_ch=f)
         self.dec2 = DoubleConv(f * 4, f * 2, dropout=dropout)
-        
+
         self.up1 = nn.ConvTranspose2d(f * 2, f, kernel_size=2, stride=2)
         self.attn1 = AttentionGate(gate_ch=f, skip_ch=f, inter_ch=f // 2)
         self.dec1 = DoubleConv(f * 2, f, dropout=0.0)
@@ -90,10 +90,10 @@ class UNet(nn.Module):
         # Decoder path
         up3 = self.up3(b)
         d3 = self.dec3(torch.cat([up3, self.attn3(up3, e3)], dim=1))
-        
+
         up2 = self.up2(d3)
         d2 = self.dec2(torch.cat([up2, self.attn2(up2, e2)], dim=1))
-        
+
         up1 = self.up1(d2)
         d1 = self.dec1(torch.cat([up1, self.attn1(up1, e1)], dim=1))
 
@@ -104,7 +104,7 @@ def dice_focal_loss(
     pred_logits: torch.Tensor,
     target: torch.Tensor,
     smooth: float = 1.0,
-    alpha: float = 0.95,  # Weights the positive class (cracks) higher
+    alpha: float = 0.6,  # Weights the positive class (cracks) higher
     gamma: float = 2.0,  # Penalizes the model more for being confident but wrong
 ) -> torch.Tensor:
     prediction_probabilities: torch.Tensor = torch.sigmoid(pred_logits)

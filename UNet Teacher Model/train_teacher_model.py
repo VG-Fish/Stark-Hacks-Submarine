@@ -7,6 +7,35 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from unet_model import UNet, dice_focal_loss
 
+_AP_THRESHOLDS: list[float] = [i / 10 for i in range(1, 10)]  # 0.1 … 0.9
+
+
+def compute_ap(
+    pred_probs: torch.Tensor,
+    gt_mask: torch.Tensor,
+) -> float:
+    """Compute Average Precision for a single image across probability thresholds."""
+    precisions: list[float] = []
+    recalls: list[float] = []
+
+    for thresh in _AP_THRESHOLDS:
+        pred_bin = (pred_probs > thresh).float()
+        tp = (pred_bin * gt_mask).sum().item()
+        fp = (pred_bin * (1 - gt_mask)).sum().item()
+        fn = ((1 - pred_bin) * gt_mask).sum().item()
+        precisions.append(tp / (tp + fp + 1e-8))
+        recalls.append(tp / (tp + fn + 1e-8))
+
+    # Sort by recall ascending for trapezoidal AUC
+    paired = sorted(zip(recalls, precisions))
+    recalls_s = [p[0] for p in paired]
+    precisions_s = [p[1] for p in paired]
+
+    ap: float = 0.0
+    for i in range(1, len(recalls_s)):
+        ap += (recalls_s[i] - recalls_s[i - 1]) * precisions_s[i]
+    return ap
+
 
 def plot_metrics(
     train_losses: list[float],
@@ -16,9 +45,10 @@ def plot_metrics(
     val_precisions: list[float],
     val_recalls: list[float],
     val_accuracies: list[float],
+    val_maps: list[float],
     save_dir: Path,
 ) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
     epochs: range = range(1, len(train_losses) + 1)
 
@@ -39,24 +69,34 @@ def plot_metrics(
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
 
-    axes[1, 0].plot(epochs, val_precisions, label="Precision", color="royalblue")
-    axes[1, 0].plot(epochs, val_recalls, label="Recall", color="crimson")
-    axes[1, 0].set_title("Precision & Recall")
+    axes[0, 2].plot(epochs, val_precisions, label="Precision", color="royalblue")
+    axes[0, 2].plot(epochs, val_recalls, label="Recall", color="crimson")
+    axes[0, 2].set_title("Precision & Recall")
+    axes[0, 2].set_xlabel("Epoch")
+    axes[0, 2].set_ylabel("Score")
+    axes[0, 2].set_ylim(0, 1)
+    axes[0, 2].legend()
+    axes[0, 2].grid(True, alpha=0.3)
+
+    axes[1, 0].plot(
+        epochs, val_accuracies, label="Pixel Accuracy", color="mediumpurple"
+    )
+    axes[1, 0].set_title("Pixel Accuracy")
     axes[1, 0].set_xlabel("Epoch")
-    axes[1, 0].set_ylabel("Score")
+    axes[1, 0].set_ylabel("Accuracy")
     axes[1, 0].set_ylim(0, 1)
     axes[1, 0].legend()
     axes[1, 0].grid(True, alpha=0.3)
 
-    axes[1, 1].plot(
-        epochs, val_accuracies, label="Pixel Accuracy", color="mediumpurple"
-    )
-    axes[1, 1].set_title("Pixel Accuracy")
+    axes[1, 1].plot(epochs, val_maps, label="mAP", color="teal")
+    axes[1, 1].set_title("Mean Average Precision (mAP)")
     axes[1, 1].set_xlabel("Epoch")
-    axes[1, 1].set_ylabel("Accuracy")
+    axes[1, 1].set_ylabel("mAP")
     axes[1, 1].set_ylim(0, 1)
     axes[1, 1].legend()
     axes[1, 1].grid(True, alpha=0.3)
+
+    axes[1, 2].axis("off")
 
     plt.tight_layout()
     plt.savefig(save_dir / "training_metrics.png", dpi=150)
@@ -170,7 +210,9 @@ def train_teacher(
     )
     print(f"Training on: {device}")
 
-    train_dataset, val_dataset, _ = prepare_datasets(dataset_dir, target_size=(96, 96))
+    train_dataset, val_dataset, _ = prepare_datasets(
+        dataset_dir, target_size=(112, 112)
+    )
 
     train_loader: DataLoader = create_dataloader(train_dataset, batch_size, device)
     val_loader: DataLoader = create_dataloader(
@@ -179,8 +221,8 @@ def train_teacher(
 
     model: UNet = UNet(in_channels=1, base_filters=48).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=20, T_mult=2, eta_min=1e-6
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
     )
 
     best_val_f1: float = 0.0
@@ -193,6 +235,7 @@ def train_teacher(
     val_precisions: list[float] = []
     val_recalls: list[float] = []
     val_accuracies: list[float] = []
+    val_maps: list[float] = []
 
     for epoch in tqdm(range(epochs), desc="Model Training Time"):
         model.train()
@@ -223,6 +266,8 @@ def train_teacher(
         total_fn: float = 0.0
         total_correct: float = 0.0
         total_pixels: float = 0.0
+        total_ap: float = 0.0
+        total_images: int = 0
 
         worst_samples: list = []
         best_samples: list = []
@@ -238,7 +283,9 @@ def train_teacher(
                     predictions = model(images)
                     val_loss += dice_focal_loss(predictions, masks).item()
 
-                predictions_bin: torch.Tensor = (predictions > 0.5).float()
+                # Cast to float32 for per-image AP computation
+                predictions_f32 = predictions.float()
+                predictions_bin: torch.Tensor = (predictions_f32 > 0.5).float()
 
                 for j in range(images.size(0)):
                     img_single = images[j]
@@ -278,6 +325,9 @@ def train_teacher(
                         best_samples, key=lambda x: x[0], reverse=True
                     )[:5]
 
+                    total_ap += compute_ap(predictions_f32[j], masks[j])
+                    total_images += 1
+
                 total_tp += (predictions_bin * masks).sum().item()
                 total_fp += (predictions_bin * (1 - masks)).sum().item()
                 total_fn += ((1 - predictions_bin) * masks).sum().item()
@@ -292,8 +342,10 @@ def train_teacher(
         val_f1: float = 2 * precision * recall / (precision + recall + 1e-8)
         iou: float = total_tp / (total_tp + total_fp + total_fn + 1e-8)
         accuracy: float = total_correct / (total_pixels + 1e-8)
+        map_score: float = total_ap / (total_images + 1e-8)
 
-        scheduler.step(epoch)
+        # Step scheduler on validation loss so it reacts to actual model performance
+        scheduler.step(val_loss)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -302,16 +354,20 @@ def train_teacher(
         val_precisions.append(precision)
         val_recalls.append(recall)
         val_accuracies.append(accuracy)
+        val_maps.append(map_score)
 
+        current_lr = optimizer.param_groups[0]["lr"]
         print(
             f"Epoch {epoch + 1:03d}/{epochs} | "
             f"Train Loss: {train_loss:.4f} | "
             f"Val Loss: {val_loss:.4f} | "
             f"F1: {val_f1:.4f} | "
             f"IoU: {iou:.4f} | "
+            f"mAP: {map_score:.4f} | "
             f"Prec: {precision:.4f} | "
             f"Rec: {recall:.4f} | "
-            f"Acc: {accuracy:.4f}"
+            f"Acc: {accuracy:.4f} | "
+            f"LR: {current_lr:.2e}"
         )
 
         # Early Stopping Logic (based on F1)
@@ -338,6 +394,7 @@ def train_teacher(
             val_precisions,
             val_recalls,
             val_accuracies,
+            val_maps,
             save_dir,
         )
 

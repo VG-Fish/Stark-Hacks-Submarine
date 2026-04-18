@@ -1,16 +1,17 @@
 #include <Arduino.h>
 
 // Allocate a buffer large enough for your maximum expected size (e.g., 128x128)
-static const uint32_t MAX_IMG_SIZE = 9216; 
+static const uint32_t MAX_IMG_SIZE = 12544;
 uint8_t imageBuffer[MAX_IMG_SIZE];
 
-bool readExact(uint8_t* dst, size_t len) {
+bool readExact(uint8_t *dst, size_t len) {
   size_t got = 0;
   unsigned long start = millis();
   while (got < len) {
     if (Serial.available()) {
-      // Serial.readBytes already blocks slightly, read() is safer in a tight loop
-      dst[got++] = Serial.read(); 
+      // Serial.readBytes already blocks slightly, read() is safer in a tight
+      // loop
+      dst[got++] = Serial.read();
       start = millis();
     }
     if (millis() - start > 2000) {
@@ -29,7 +30,8 @@ bool waitForHeader() {
       char c = Serial.read();
       if (c == target[matched]) {
         matched++;
-        if (matched == 4) return true;
+        if (matched == 4)
+          return true;
       } else {
         matched = (c == target[0]) ? 1 : 0;
       }
@@ -39,15 +41,19 @@ bool waitForHeader() {
 
 void setup() {
   Serial.begin(921600);
-  while (!Serial) { delay(10); }
+  while (!Serial) {
+    delay(10);
+  }
   Serial.println("Pico ready");
 }
 
 void loop() {
-  if (!waitForHeader()) return;
+  if (!waitForHeader())
+    return;
 
   uint8_t meta[4];
-  if (!readExact(meta, 4)) return;
+  if (!readExact(meta, 4))
+    return;
 
   uint16_t w = meta[0] | (meta[1] << 8);
   uint16_t h = meta[2] | (meta[3] << 8);

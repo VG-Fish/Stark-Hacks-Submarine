@@ -20,7 +20,7 @@ class CrackDataset(Dataset):
 
         if augment:
             transforms: list = [
-                A.Resize(*target_size),
+                A.RandomResizedCrop(size=target_size),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),
@@ -34,9 +34,9 @@ class CrackDataset(Dataset):
                 A.RandomBrightnessContrast(
                     p=0.2, brightness_limit=0.2, contrast_limit=0.15
                 ),
-                # A.GaussNoise(std_range=(0.01, 0.05), p=0.3),
-                # A.CLAHE(p=0.3),
-                # A.ElasticTransform(alpha=80, sigma=10, p=0.3),
+                A.GaussNoise(std_range=(0.01, 0.05), p=0.3),
+                A.CLAHE(p=0.3),
+                A.ElasticTransform(alpha=80, sigma=10, p=0.3),
             ]
         else:
             transforms = [
