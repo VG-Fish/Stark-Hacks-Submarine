@@ -1,4 +1,6 @@
 .venv
 uv.lock
 Dataset
+SubDataset
 __pycache__
+.DS_Store
