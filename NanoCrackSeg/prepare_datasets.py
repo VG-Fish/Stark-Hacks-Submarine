@@ -4,7 +4,6 @@ import albumentations as A
 import cv2
 import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
 
 
@@ -54,19 +53,16 @@ class CrackDataset(Dataset):
     def __getitem__(
         self: "CrackDataset", idx: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        image: np.ndarray = np.array(
-            Image.open(self.image_paths[idx]).convert("L")
-        )  # grayscale
-        mask: np.ndarray = np.array(Image.open(self.mask_paths[idx]).convert("L"))
+        image = cv2.imread(str(self.image_paths[idx]), cv2.IMREAD_GRAYSCALE)
+        mask = cv2.imread(str(self.mask_paths[idx]), cv2.IMREAD_GRAYSCALE)
 
         result: dict[str, np.ndarray] = self.transform(image=image, mask=mask)
 
-        # Convert to tensors
         torch_image: torch.Tensor = (
-            torch.tensor(result["image"], dtype=torch.float) / 255.0  # pyright: ignore[reportPrivateImportUsage]
+            torch.tensor(result["image"], dtype=torch.float32) / 255.0
         )
         torch_mask: torch.Tensor = (
-            torch.tensor(result["mask"], dtype=torch.float) / 255.0  # pyright: ignore[reportPrivateImportUsage]
+            torch.tensor(result["mask"], dtype=torch.float32) / 255.0
         )
 
         torch_image = torch_image.unsqueeze(0)
