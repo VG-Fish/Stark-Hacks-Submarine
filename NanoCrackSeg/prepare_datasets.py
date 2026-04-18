@@ -20,7 +20,7 @@ class CrackDataset(Dataset):
         self.mask_paths: list[Path] = mask_paths
 
         spatial: list = [
-            A.Resize(*target_size),
+            A.RandomCrop(*target_size),
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
             A.RandomRotate90(p=0.5),
@@ -34,8 +34,10 @@ class CrackDataset(Dataset):
         ]
         pixel_only: list = (
             [
-                A.RandomBrightnessContrast(p=0.4),
-                A.GaussNoise(std_range=(0.001, 0.005), p=0.3),
+                A.RandomBrightnessContrast(
+                    p=0.2, brightness_limit=0.2, contrast_limit=0.15
+                ),
+                A.GaussNoise(std_range=(0.01, 0.05), p=0.3),
                 A.CLAHE(p=0.3),
             ]
             if augment
@@ -77,7 +79,9 @@ def get_all_file_paths(directory: Path) -> list[Path]:
     return sorted(directory.rglob("*.*"))
 
 
-def prepare_datasets(dataset_directory: Path) -> tuple[CrackDataset, CrackDataset]:
+def prepare_datasets(
+    dataset_directory: Path, target_size: tuple[int, int]
+) -> tuple[CrackDataset, CrackDataset]:
     train_dataset: Path = dataset_directory / "train"
     train_image_paths: list[Path] = get_all_file_paths(train_dataset / "images")
     train_masks_paths: list[Path] = get_all_file_paths(train_dataset / "masks")
@@ -93,8 +97,6 @@ def prepare_datasets(dataset_directory: Path) -> tuple[CrackDataset, CrackDatase
     assert len(test_image_paths) == len(test_masks_paths), (
         f"Test mismatch: {len(test_image_paths)} images vs {len(test_masks_paths)} masks"
     )
-
-    target_size: tuple[int, int] = (96, 96)
 
     return CrackDataset(
         train_image_paths, train_masks_paths, target_size, augment=True
