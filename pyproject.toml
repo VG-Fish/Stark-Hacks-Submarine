@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13.11"
 dependencies = [
+    "albumentations>=2.0.8",
     "inputs>=0.5",
     "opencv-python>=4.13.0.92",
     "perforatedai>=3.2.0",
