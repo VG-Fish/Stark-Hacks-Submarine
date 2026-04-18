@@ -71,6 +71,5 @@ def dice_bce_loss(
         pred_probs.sum(dim=(2, 3)) + target.sum(dim=(2, 3)) + smooth
     )
 
-    # BCE with Logits is highly optimized in PyTorch/Metal
     bce = F.binary_cross_entropy_with_logits(pred_logits, target)
     return dice.mean() + bce

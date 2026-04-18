@@ -45,6 +45,7 @@ def train_teacher(
     epochs: int = 100,
     batch_size: int = 16,
     lr: float = 1e-3,
+    patience: int = 15,
 ) -> UNet:
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path: Path = save_dir / "teacher_unet.pth"
@@ -58,22 +59,18 @@ def train_teacher(
     )
     print(f"Training on: {device}")
 
-    # Unified Memory Optimization: If using Apple Silicon (MPS), pin_memory is redundant overhead.
-    use_pin_memory = device.type == "cuda"
-
     train_dataset, val_dataset = prepare_datasets(dataset_dir, target_size=(96, 96))
 
-    # DataLoader Optimizations: persistent_workers and prefetch_factor keep the GPU fed
+    use_pin_memory = device.type == "cuda"
     train_loader: DataLoader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=8,  # M3 Pro has plenty of cores
+        num_workers=8,
         pin_memory=use_pin_memory,
         persistent_workers=True,
         prefetch_factor=2,
     )
-
     val_loader: DataLoader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -89,6 +86,8 @@ def train_teacher(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_val_loss: float = float("inf")
+    patience_counter: int = 0
+
     train_losses: list[float] = []
     val_losses: list[float] = []
     val_f1s: list[float] = []
@@ -103,7 +102,6 @@ def train_teacher(
                 masks.to(device, non_blocking=True),
             )
 
-            # memory optimization: set_to_none=True clears the gradient tensors
             optimizer.zero_grad(set_to_none=True)
 
             predictions: torch.Tensor = model(images)
@@ -128,7 +126,6 @@ def train_teacher(
                 predictions = model(images)
                 val_loss += dice_bce_loss(predictions, masks).item()
 
-                # Because we output raw logits now, predicting > 0 is mathematically identical to sigmoid(pred) > 0.5
                 predictions_bin: torch.Tensor = (predictions > 0.0).float()
 
                 intersection: torch.Tensor = (predictions_bin * masks).sum()
@@ -152,10 +149,21 @@ def train_teacher(
             f"Val F1: {val_f1:.4f}"
         )
 
+        # Early Stopping Logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            patience_counter = 0
             torch.save(model.state_dict(), save_path)
             print(f"  Saved best model → {save_path}")
+        else:
+            patience_counter += 1
+            print(f"  EarlyStopping counter: {patience_counter} out of {patience}")
+
+            if patience_counter >= patience:
+                print(
+                    f"Early stopping triggered at epoch {epoch + 1}! Training halted to save resources."
+                )
+                break
 
         plot_metrics(train_losses, val_losses, val_f1s, save_dir)
 
@@ -167,6 +175,7 @@ def main() -> None:
     train_teacher(
         dataset_dir=Path("Dataset"),
         save_dir=Path("results/teacher"),
+        patience=15,
     )
 
 
