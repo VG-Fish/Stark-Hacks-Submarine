@@ -20,7 +20,7 @@ class CrackDataset(Dataset):
 
         if augment:
             transforms: list = [
-                A.RandomCrop(*target_size),
+                A.Resize(*target_size),
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),

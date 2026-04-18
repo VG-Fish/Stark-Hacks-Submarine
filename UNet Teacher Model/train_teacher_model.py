@@ -105,9 +105,7 @@ def save_best_predictions(best_samples: list, save_dir: Path) -> None:
     if not best_samples:
         return
 
-    fig, axes = plt.subplots(
-        len(best_samples), 3, figsize=(10, 3 * len(best_samples))
-    )
+    fig, axes = plt.subplots(len(best_samples), 3, figsize=(10, 3 * len(best_samples)))
 
     # Handle case where there's only 1 sample
     if len(best_samples) == 1:
@@ -172,16 +170,14 @@ def train_teacher(
     )
     print(f"Training on: {device}")
 
-    train_dataset, val_dataset, _ = prepare_datasets(
-        dataset_dir, target_size=(96, 96)
-    )
+    train_dataset, val_dataset, _ = prepare_datasets(dataset_dir, target_size=(96, 96))
 
     train_loader: DataLoader = create_dataloader(train_dataset, batch_size, device)
     val_loader: DataLoader = create_dataloader(
         val_dataset, batch_size, device, shuffle=False
     )
 
-    model: UNet = UNet(in_channels=1, base_filters=64).to(device)
+    model: UNet = UNet(in_channels=1, base_filters=48).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=20, T_mult=2, eta_min=1e-6
@@ -242,7 +238,7 @@ def train_teacher(
                     predictions = model(images)
                     val_loss += dice_focal_loss(predictions, masks).item()
 
-                predictions_bin: torch.Tensor = (predictions > 1.0).float()
+                predictions_bin: torch.Tensor = (predictions > 0.5).float()
 
                 for j in range(images.size(0)):
                     img_single = images[j]
@@ -278,7 +274,9 @@ def train_teacher(
                         )
                     )
 
-                    best_samples = sorted(best_samples, key=lambda x: x[0], reverse=True)[:5]
+                    best_samples = sorted(
+                        best_samples, key=lambda x: x[0], reverse=True
+                    )[:5]
 
                 total_tp += (predictions_bin * masks).sum().item()
                 total_fp += (predictions_bin * (1 - masks)).sum().item()
