@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import albumentations as A
@@ -69,17 +68,13 @@ class CrackDataset(Dataset):
         )
 
         torch_image = torch_image.unsqueeze(0)
-        torch_mask = torch_mask.unsqueeze(0)  # pyright: ignore[reportAttributeAccessIssue]
+        torch_mask = torch_mask.unsqueeze(0)
 
         return torch_image, torch_mask
 
 
 def get_all_file_paths(directory: Path) -> list[Path]:
-    file_paths: list[Path] = []
-    for root, _, files in os.walk(directory):
-        for file in files:
-            file_paths.append(Path(os.path.join(root, file)))
-    return file_paths
+    return sorted(directory.rglob("*.*"))
 
 
 def prepare_datasets(dataset_directory: Path) -> tuple[CrackDataset, CrackDataset]:
@@ -87,12 +82,20 @@ def prepare_datasets(dataset_directory: Path) -> tuple[CrackDataset, CrackDatase
     train_image_paths: list[Path] = get_all_file_paths(train_dataset / "images")
     train_masks_paths: list[Path] = get_all_file_paths(train_dataset / "masks")
 
+    assert len(train_image_paths) == len(train_masks_paths), (
+        f"Train mismatch: {len(train_image_paths)} images vs {len(train_masks_paths)} masks"
+    )
+
     test_dataset: Path = dataset_directory / "test"
     test_image_paths: list[Path] = get_all_file_paths(test_dataset / "images")
     test_masks_paths: list[Path] = get_all_file_paths(test_dataset / "masks")
 
+    assert len(test_image_paths) == len(test_masks_paths), (
+        f"Test mismatch: {len(test_image_paths)} images vs {len(test_masks_paths)} masks"
+    )
+
     target_size: tuple[int, int] = (96, 96)
 
     return CrackDataset(
-        train_image_paths, train_masks_paths, target_size
-    ), CrackDataset(test_image_paths, test_masks_paths, target_size)
+        train_image_paths, train_masks_paths, target_size, augment=True
+    ), CrackDataset(test_image_paths, test_masks_paths, target_size, augment=False)
