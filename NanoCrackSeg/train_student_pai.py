@@ -5,9 +5,14 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dotenv import load_dotenv
 from nano_crack_seg import NanoCrackSeg, rfkd_loss
+from perforatedai import globals_perforatedai as GPA
+from perforatedai import utils_perforatedai as UPA
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+load_dotenv()
 
 TEACHER_PATH = Path(__file__).parent.parent / "UNet Teacher Model"
 sys.path.insert(0, str(TEACHER_PATH))
@@ -138,18 +143,14 @@ def save_prediction_samples(samples: list, save_dir: Path, filename: str) -> Non
     plt.close(fig)
 
 
-def train_student(
+def train_student_pai(
     dataset_dir: Path,
     teacher_weights_path: Path,
     save_dir: Path,
-    epochs: int = 150,
-    batch_size: int = 32,
     lr: float = 1e-3,
-    patience: int = 20,
 ) -> NanoCrackSeg:
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Optimized for M3 Pro
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Training on: {device}")
 
@@ -158,30 +159,46 @@ def train_student(
     )
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=32,
         shuffle=True,
         num_workers=4,
         pin_memory=False,
     )
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
     teacher = UNet(in_channels=1, base_filters=48).to(device).eval()
     teacher.load_state_dict(torch.load(teacher_weights_path, map_location=device))
     for p in teacher.parameters():
         p.requires_grad = False
 
-    student = NanoCrackSeg().to(device)
+    # --- PAI: track BatchNorm2d layers (inside DWConvBlock.dw_conv[2]) ---
+    # They are wrapped inside the Sequential already so just tracking is sufficient
+    GPA.pc.append_modules_to_track([nn.BatchNorm2d])
+    GPA.pc.set_unwrapped_modules_confirmed(True)
+
+    # --- PAI: perforate before moving to device ---
+    student = NanoCrackSeg()
+    student = UPA.perforate_model(
+        student, save_name="PAI_student", maximizing_score=True
+    )
+    student = student.to(device)
+
     adaptors = FeatureAdaptors().to(device)
 
     t_hooks = FeatureExtractor(teacher, ["enc1", "enc2", "enc3"])
     s_hooks = FeatureExtractor(student, ["enc1", "enc2", "enc3"])
 
-    optimizer = torch.optim.AdamW(
-        list(student.parameters()) + list(adaptors.parameters()),
-        lr=lr,
-        weight_decay=1e-2,
+    # --- PAI: optimizer for student only (adaptors are not perforated) ---
+    # Note: weight_decay removed — PAI docs warn it can interfere with dendrite learning
+    GPA.pai_tracker.set_optimizer(torch.optim.AdamW)
+    GPA.pai_tracker.set_scheduler(torch.optim.lr_scheduler.ReduceLROnPlateau)
+    optimArgs = {"params": list(student.parameters()), "lr": lr}
+    schedArgs = {"mode": "max", "patience": 5}
+    optimizer, _ = GPA.pai_tracker.setup_optimizer(
+        student, optimArgs, schedArgs
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    # Separate optimizer for adaptors so PAI doesn't see untracked params
+    adaptors_optimizer = torch.optim.AdamW(adaptors.parameters(), lr=lr)
 
     history = {
         k: []
@@ -196,19 +213,22 @@ def train_student(
             "val_map",
         ]
     }
-    best_val_f1 = 0.0
-    patience_counter = 0
 
-    for epoch in range(epochs):
+    # --- PAI: while(True) loop instead of fixed epoch range ---
+    epoch = -1
+    while True:
+        epoch += 1
+
         student.train()
         adaptors.train()
         train_loss_accum = 0.0
 
         for images, masks in tqdm(
-            train_loader, desc=f"Epoch {epoch + 1}/{epochs} [Train]", leave=False
+            train_loader, desc=f"Epoch {epoch + 1} [Train]", leave=False
         ):
             images, masks = images.to(device), masks.to(device)
             optimizer.zero_grad(set_to_none=True)
+            adaptors_optimizer.zero_grad(set_to_none=True)
 
             t_hooks.clear()
             s_hooks.clear()
@@ -230,6 +250,7 @@ def train_student(
 
             torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
             optimizer.step()
+            adaptors_optimizer.step()
             train_loss_accum += loss.item()
 
         # Validation
@@ -282,13 +303,15 @@ def train_student(
                     t_ap += compute_ap(probs[j], masks[j])
                     t_img_cnt += 1
 
-        # Log Metrics
+        # Metrics
         prec = t_tp / (t_tp + t_fp + 1e-8)
         rec = t_tp / (t_tp + t_fn + 1e-8)
         f1 = 2 * prec * rec / (prec + rec + 1e-8)
+        avg_train_loss = train_loss_accum / len(train_loader)
+        avg_val_loss = v_loss / len(val_loader)
 
-        history["train_loss"].append(train_loss_accum / len(train_loader))
-        history["val_loss"].append(v_loss / len(val_loader))
+        history["train_loss"].append(avg_train_loss)
+        history["val_loss"].append(avg_val_loss)
         history["val_f1"].append(f1)
         history["val_iou"].append(t_tp / (t_tp + t_fp + t_fn + 1e-8))
         history["val_prec"].append(prec)
@@ -297,7 +320,7 @@ def train_student(
         history["val_map"].append(t_ap / t_img_cnt)
 
         print(
-            f"Epoch {epoch + 1:03d} | Train Loss: {history['train_loss'][-1]:.4f} | F1: {f1:.4f} | IoU: {history['val_iou'][-1]:.4f}"
+            f"Epoch {epoch + 1:03d} | Train Loss: {avg_train_loss:.4f} | F1: {f1:.4f} | IoU: {history['val_iou'][-1]:.4f}"
         )
 
         # Plots and Samples
@@ -307,26 +330,37 @@ def train_student(
             best_samples, save_dir, "best_validation_predictions.png"
         )
 
-        # Checkpoint and Early Stopping
-        if f1 > best_val_f1:
-            best_val_f1 = f1
-            patience_counter = 0
-            torch.save(student.state_dict(), save_dir / "student_nano_crack_seg.pth")
-            print("  [Saved Best Model]")
-        else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                print("Early stopping triggered.")
-                break
+        # --- PAI: extra scores for graphing ---
+        GPA.pai_tracker.add_extra_score(avg_train_loss, "Train Loss")
+        GPA.pai_tracker.add_extra_score_without_graphing(avg_val_loss, "Val Loss")
 
-        scheduler.step()
+        # --- PAI: drive the training loop ---
+        student, restructured, training_complete = GPA.pai_tracker.add_validation_score(
+            f1, student
+        )
+        student.to(device)
+
+        if training_complete:
+            torch.save(
+                student.state_dict(), save_dir / "student_nano_crack_seg_pai.pth"
+            )
+            print("PAI training complete. Best model saved.")
+            break
+        elif restructured:
+            # Reinitialize PAI optimizer with expanded student params after dendrites added
+            optimArgs = {"params": list(student.parameters()), "lr": lr}
+            schedArgs = {"mode": "max", "patience": 5}
+            optimizer, _ = GPA.pai_tracker.setup_optimizer(
+                student, optimArgs, schedArgs
+            )
+            # adaptors_optimizer is unchanged — adaptors are not restructured
 
     return student
 
 
 if __name__ == "__main__":
-    train_student(
+    train_student_pai(
         dataset_dir=Path("SubDataset"),
         teacher_weights_path=Path("results/teacher/teacher_unet.pth"),
-        save_dir=Path("results/student"),
+        save_dir=Path("results/student_pai"),
     )

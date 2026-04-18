@@ -11,6 +11,7 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "perforatedai>=3.2.0",
     "perforatedbp>=3.2.0",
+    "python-dotenv>=1.2.2",
     "streamlit>=1.56.0",
     "tensorflow>=2.21.0",
     "ti-kit-board-communication>=1.0.1",
