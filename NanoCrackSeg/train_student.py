@@ -154,7 +154,7 @@ def train_student(
     print(f"Training on: {device}")
 
     train_dataset, val_dataset, _ = prepare_datasets(
-        dataset_dir, target_size=(104, 104)
+        dataset_dir, target_size=(112, 112)
     )
     train_loader = DataLoader(
         train_dataset,

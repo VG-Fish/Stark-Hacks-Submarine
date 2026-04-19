@@ -22,6 +22,8 @@ class DWConvBlock(nn.Module):
 class NanoCrackSeg(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.quant = torch.ao.quantization.QuantStub()
+        self.dequant = torch.ao.quantization.DeQuantStub()
         # Encoder
         self.enc1 = DWConvBlock(1, 8)
         self.pool1 = nn.MaxPool2d(2)
@@ -46,6 +48,7 @@ class NanoCrackSeg(nn.Module):
         self.output = nn.Conv2d(8, 1, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.quant(x)
         # Encoder
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool1(e1))
@@ -59,7 +62,8 @@ class NanoCrackSeg(nn.Module):
         d2 = self.dec2(torch.cat([self.up2(d3), e2], dim=1))
         d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))
 
-        return self.output(d1)
+        out = self.output(d1)
+        return self.dequant(out)
 
 
 def rfkd_loss(student_logits, teacher_logits, true_masks, T=4.0, alpha=0.5):
