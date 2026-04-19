@@ -155,7 +155,7 @@ def train_student_pai(
     print(f"Training on: {device}")
 
     train_dataset, val_dataset, _ = prepare_datasets(
-        dataset_dir, target_size=(104, 104)
+        dataset_dir, target_size=(112, 112)
     )
     train_loader = DataLoader(
         train_dataset,
@@ -194,9 +194,7 @@ def train_student_pai(
     GPA.pai_tracker.set_scheduler(torch.optim.lr_scheduler.ReduceLROnPlateau)
     optimArgs = {"params": list(student.parameters()), "lr": lr}
     schedArgs = {"mode": "max", "patience": 5}
-    optimizer, _ = GPA.pai_tracker.setup_optimizer(
-        student, optimArgs, schedArgs
-    )
+    optimizer, _ = GPA.pai_tracker.setup_optimizer(student, optimArgs, schedArgs)
     # Separate optimizer for adaptors so PAI doesn't see untracked params
     adaptors_optimizer = torch.optim.AdamW(adaptors.parameters(), lr=lr)
 

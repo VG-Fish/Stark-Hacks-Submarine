@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 // Allocate a buffer large enough for your maximum expected size (e.g., 128x128)
-static const uint32_t MAX_IMG_SIZE = 12544;
+static const uint32_t MAX_IMG_SIZE = 112 * 112;
 uint8_t imageBuffer[MAX_IMG_SIZE];
 
 bool readExact(uint8_t *dst, size_t len) {
@@ -52,8 +52,10 @@ void loop() {
     return;
 
   uint8_t meta[4];
-  if (!readExact(meta, 4))
+  if (!readExact(meta, 4)) {
+    Serial.println("Meta read timeout");
     return;
+  }
 
   uint16_t w = meta[0] | (meta[1] << 8);
   uint16_t h = meta[2] | (meta[3] << 8);
