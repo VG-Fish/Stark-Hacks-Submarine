@@ -6,7 +6,7 @@ import numpy as np
 import serial
 
 USB_CAMERA_PORT: int = 0
-SMALL_SIZE: tuple[int, int] = (96, 96)  # Change this to whatever you want!
+SMALL_SIZE: tuple[int, int] = (112, 112)  # Change this to whatever you want!
 TITLE_HEIGHT: int = 45
 PADDING: int = 10
 
