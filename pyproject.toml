@@ -7,10 +7,6 @@ requires-python = ">=3.13.11"
 dependencies = [
     "inputs>=0.5",
     "opencv-python>=4.13.0.92",
-    "perforatedai>=3.2.0",
-    "perforatedbp>=3.2.0",
     "streamlit>=1.56.0",
-    "tensorflow>=2.21.0",
     "ti-kit-board-communication>=1.0.1",
-    "torch>=2.11.0",
 ]
